@@ -1207,7 +1207,7 @@ mod tests {
             },
             routing_rules: None,
             worker_cleanup_avg_sleep: Duration::from_secs(2),
-            write_buffer_connection_string: None,
+            write_buffer_connection: None,
         };
 
         // Create a database
@@ -1299,7 +1299,7 @@ mod tests {
             lifecycle_rules: Default::default(),
             routing_rules: None,
             worker_cleanup_avg_sleep: Duration::from_secs(2),
-            write_buffer_connection_string: None,
+            write_buffer_connection: None,
         };
 
         // Create a database
