@@ -1405,8 +1405,8 @@ impl TryFrom<&DfExpr> for BinaryExpr {
         match df_expr {
             DfExpr::BinaryExpr { left, op, right } => {
                 match (&**left, &**right) {
-                    (DfExpr::Column(name), DfExpr::Literal(scalar)) => Ok(Self::new(
-                        name,
+                    (DfExpr::Column(c), DfExpr::Literal(scalar)) => Ok(Self::new(
+                        &c.name,
                         Operator::try_from(op)?,
                         Literal::try_from(scalar)?,
                     )),
@@ -3424,8 +3424,10 @@ west,host-c,pro,10,6
         assert_eq!(result, to_map(vec![]));
     }
 
-    use datafusion::logical_plan::*;
-    use datafusion::scalar::ScalarValue;
+    use datafusion::{
+        logical_plan::{col, Expr},
+        scalar::ScalarValue,
+    };
     use std::convert::TryFrom;
 
     #[test]
