@@ -860,7 +860,7 @@ impl<'a> TableBatch<'a> {
                     .values_as_i64values()
                     .context(TimeColumnWrongType)?
                     .values()
-                    .expect("invalid flatbuffers: time columm values must be present");
+                    .expect("invalid flatbuffers: time column values must be present");
 
                 let min = vals.iter().min().context(TimeValueMissing)?;
                 let max = vals.iter().max().context(TimeValueMissing)?;

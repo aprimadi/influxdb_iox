@@ -15,6 +15,7 @@ use data_types::database_rules::LifecycleRules;
 use data_types::DatabaseName;
 pub use guard::*;
 pub use policy::*;
+use std::time::Instant;
 use tracker::TaskTracker;
 
 mod guard;
@@ -73,6 +74,8 @@ pub trait LifecycleDb {
 pub trait LockablePartition: Sized {
     type Partition: LifecyclePartition;
     type Chunk: LockableChunk;
+    type PersistHandle: Send + Sync + 'static;
+
     type Error: std::error::Error + Send + Sync;
 
     /// Acquire a shared read lock on the chunk
@@ -96,6 +99,23 @@ pub trait LockablePartition: Sized {
     fn compact_chunks(
         partition: LifecycleWriteGuard<'_, Self::Partition, Self>,
         chunks: Vec<LifecycleWriteGuard<'_, <Self::Chunk as LockableChunk>::Chunk, Self::Chunk>>,
+    ) -> Result<TaskTracker<<Self::Chunk as LockableChunk>::Job>, Self::Error>;
+
+    /// Returns a PersistHandle for the provided partition, and the timestamp to flush
+    ///
+    /// Returns None if there is a persistence operation in flight
+    /// TODO: This interface is nasty
+    fn prepare_persist(
+        partition: &mut LifecycleWriteGuard<'_, Self::Partition, Self>,
+    ) -> Option<(Self::PersistHandle, DateTime<Utc>)>;
+
+    /// Split and persist chunks
+    ///
+    /// TODO: Encapsulate these locks into a CatalogTransaction object
+    fn persist_chunks(
+        partition: LifecycleWriteGuard<'_, Self::Partition, Self>,
+        chunks: Vec<LifecycleWriteGuard<'_, <Self::Chunk as LockableChunk>::Chunk, Self::Chunk>>,
+        handle: Self::PersistHandle,
     ) -> Result<TaskTracker<<Self::Chunk as LockableChunk>::Job>, Self::Error>;
 
     /// Drops a chunk from the partition
@@ -127,11 +147,14 @@ pub trait LockableChunk: Sized {
     fn write(&self) -> LifecycleWriteGuard<'_, Self::Chunk, Self>;
 
     /// Starts an operation to move a chunk to the read buffer
+    ///
+    /// TODO: Remove this (#1855)
     fn move_to_read_buffer(
         s: LifecycleWriteGuard<'_, Self::Chunk, Self>,
     ) -> Result<TaskTracker<Self::Job>, Self::Error>;
 
     /// Starts an operation to write a chunk to the object store
+    /// TODO: Remove this
     fn write_to_object_store(
         s: LifecycleWriteGuard<'_, Self::Chunk, Self>,
     ) -> Result<TaskTracker<Self::Job>, Self::Error>;
@@ -148,6 +171,12 @@ pub trait LockableChunk: Sized {
 
 pub trait LifecyclePartition {
     fn partition_key(&self) -> &str;
+
+    /// Returns an approximation of the number of rows that can be persisted
+    fn persistable_row_count(&self) -> usize;
+
+    /// Returns the age of the oldest unpersisted write
+    fn minimum_unpersisted_age(&self) -> Option<Instant>;
 }
 
 /// The lifecycle operates on chunks implementing this trait
@@ -155,6 +184,9 @@ pub trait LifecycleChunk {
     fn lifecycle_action(&self) -> Option<&TaskTracker<ChunkLifecycleAction>>;
 
     fn clear_lifecycle_action(&mut self);
+
+    /// Returns the min timestamp contained within this chunk
+    fn min_timestamp(&self) -> DateTime<Utc>;
 
     fn time_of_first_write(&self) -> Option<DateTime<Utc>>;
 

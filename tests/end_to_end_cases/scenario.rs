@@ -355,6 +355,7 @@ pub async fn create_quickly_persisting_database(
             worker_backoff_millis: 100,
             persist_row_threshold: 10_000,
             late_arrive_window_seconds,
+            persist_age_threshold_seconds: late_arrive_window_seconds,
             ..Default::default()
         }),
         ..Default::default()

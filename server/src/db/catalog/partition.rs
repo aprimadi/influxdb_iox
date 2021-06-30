@@ -17,8 +17,8 @@ use data_types::chunk_metadata::{ChunkAddr, ChunkSummary};
 use internal_types::schema::Schema;
 use lifecycle::ChunkLifecycleAction;
 use persistence_windows::persistence_windows::PersistenceWindows;
+use observability_deps::tracing::info;
 use snafu::Snafu;
-
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("chunk not found: {}", chunk))]
@@ -179,6 +179,7 @@ impl Partition {
             partition_key: Arc::clone(&self.partition_key),
             chunk_id,
         };
+        info!(%addr, row_count=chunk.rows(), "inserting RUB chunk to catalog");
 
         let chunk = Arc::new(self.metrics.new_chunk_lock(CatalogChunk::new_rub_chunk(
             addr,
@@ -306,7 +307,11 @@ impl Partition {
         &self.metrics
     }
 
-    pub fn persistence_windows(&mut self) -> Option<&mut PersistenceWindows> {
+    pub fn persistence_windows(&self) -> Option<&PersistenceWindows> {
+        self.persistence_windows.as_ref()
+    }
+
+    pub fn persistence_windows_mut(&mut self) -> Option<&mut PersistenceWindows> {
         self.persistence_windows.as_mut()
     }
 
