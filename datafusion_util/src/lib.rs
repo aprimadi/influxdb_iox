@@ -26,8 +26,6 @@ pub trait AsExpr {
     }
 }
 
-/// Helpers to creating DataFusion [`PhysicalExpr`]s
-
 impl AsExpr for Arc<str> {
     fn as_expr(&self) -> Expr {
         col(self.as_ref())
