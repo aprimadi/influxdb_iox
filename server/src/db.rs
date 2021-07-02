@@ -1077,27 +1077,23 @@ mod tests {
         let join_handle =
             tokio::spawn(async move { db_captured.background_worker(shutdown_captured).await });
 
+        let server_id = db.server_id.to_string();
+
         // check: after a while the error should be reported in the database's metrics
         let t_0 = Instant::now();
         loop {
-            let loop_db = Arc::clone(&db);
-            dbg!(&loop_db.ingest_errors);
-
-            let family = metrics.try_has_metric_family("ingest.errors.total");
+            let family = metrics.try_has_metric_family("ingest_errors_total");
 
             if let Ok(metric) = family {
                 if metric
-                    .with_labels(&[("server_id", &loop_db.server_id.to_string())])
+                    .with_labels(&[("db_name", "placeholder"), ("server_id", &server_id), ("svr_id", "1")])
                     .counter()
                     .eq(1.0)
                     .is_ok()
                 {
                     break;
                 }
-            } else {
-                dbg!(&family);
             }
-            dbg!(t_0.elapsed());
 
             assert!(t_0.elapsed() < Duration::from_secs(10));
             tokio::time::sleep(Duration::from_millis(100)).await;
