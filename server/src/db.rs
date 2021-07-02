@@ -885,7 +885,7 @@ mod tests {
         chunk_metadata::ChunkStorage,
         partition_metadata::{ColumnSummary, InfluxDbType, StatValues, Statistics, TableSummary},
     };
-    use entry::test_helpers::lp_to_entry;
+    use entry::{test_helpers::lp_to_entry, Sequence};
     use futures::{stream, StreamExt, TryStreamExt};
     use internal_types::selection::Selection;
     use mutable_buffer::persistence_windows::MinMaxSequence;
@@ -901,7 +901,7 @@ mod tests {
     };
     use query::{exec::ExecutorType, frontend::sql::SqlQueryPlanner, QueryChunk, QueryDatabase};
     use std::{
-        collections::HashSet,
+        collections::{BTreeMap, HashSet},
         convert::TryFrom,
         iter::Iterator,
         num::{NonZeroU64, NonZeroUsize},
@@ -976,7 +976,9 @@ mod tests {
     #[tokio::test]
     async fn read_from_write_buffer_write_to_mutable_buffer() {
         let entry = lp_to_entry("cpu bar=1 10");
-        let write_buffer = Arc::new(MockBufferForReading::new(vec![Ok(entry)]));
+        let write_buffer = Arc::new(MockBufferForReading::new(vec![Ok(
+            SequencedEntry::new_unsequenced(entry),
+        )]));
 
         let db = TestDb::builder()
             .write_buffer(WriteBufferConfig::Reading(Arc::clone(&write_buffer) as _))
@@ -1887,6 +1889,59 @@ mod tests {
         let open_max = windows.open_max_time().unwrap();
         assert_eq!(open_min.timestamp_nanos(), 10);
         assert_eq!(open_max.timestamp_nanos(), 20);
+    }
+
+    #[tokio::test]
+    async fn read_from_write_buffer_updates_persistence_windows() {
+        let entry = lp_to_entry("cpu bar=1 10");
+        let partition_key = "1970-01-01T00";
+
+        let write_buffer = Arc::new(MockBufferForReading::new(vec![
+            Ok(SequencedEntry::new_from_sequence(Sequence::new(0, 0), entry.clone()).unwrap()),
+            Ok(SequencedEntry::new_from_sequence(Sequence::new(1, 0), entry.clone()).unwrap()),
+            Ok(SequencedEntry::new_from_sequence(Sequence::new(1, 2), entry.clone()).unwrap()),
+            Ok(SequencedEntry::new_from_sequence(Sequence::new(0, 1), entry).unwrap()),
+        ]));
+
+        let db = TestDb::builder()
+            .write_buffer(WriteBufferConfig::Reading(Arc::clone(&write_buffer) as _))
+            .build()
+            .await
+            .db;
+
+        // do: start background task loop
+        let shutdown: CancellationToken = Default::default();
+        let shutdown_captured = shutdown.clone();
+        let db_captured = Arc::clone(&db);
+        let join_handle =
+            tokio::spawn(async move { db_captured.background_worker(shutdown_captured).await });
+
+        // check: after a while the persistence windows should have the expected data
+        let t_0 = Instant::now();
+        let min_unpersisted = loop {
+            if let Ok(partition) = db.catalog.partition("cpu", partition_key) {
+                let mut partition = partition.write();
+                let windows = partition.persistence_windows().unwrap();
+                let min_unpersisted = windows.minimum_unpersisted_sequence();
+
+                if let Some(min_unpersisted) = min_unpersisted {
+                    break min_unpersisted;
+                }
+            }
+
+            assert!(t_0.elapsed() < Duration::from_secs(10));
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+
+        // do: stop background task loop
+        shutdown.cancel();
+        join_handle.await.unwrap();
+
+        let mut expected_unpersisted = BTreeMap::new();
+        expected_unpersisted.insert(0, MinMaxSequence::new(0, 1));
+        expected_unpersisted.insert(1, MinMaxSequence::new(0, 2));
+
+        assert_eq!(min_unpersisted, expected_unpersisted);
     }
 
     #[tokio::test]
