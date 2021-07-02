@@ -541,12 +541,13 @@ where
         .await
         .map_err(|e| Box::new(e) as _)
         .context(CannotCreatePreservedCatalog)?;
-        let write_buffer = write_buffer::WriteBufferConfig::new(&rules).map_err(|e| {
-            Error::CreatingWriteBuffer {
-                config: rules.write_buffer_connection.clone(),
-                source: e,
-            }
-        })?;
+        let write_buffer =
+            write_buffer::WriteBufferConfig::new(server_id, &rules).map_err(|e| {
+                Error::CreatingWriteBuffer {
+                    config: rules.write_buffer_connection.clone(),
+                    source: e,
+                }
+            })?;
         db_reservation.advance_init(preserved_catalog, catalog, write_buffer)?;
 
         // ready to commit
