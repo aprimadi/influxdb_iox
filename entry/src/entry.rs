@@ -345,8 +345,7 @@ fn pb_check_table_batch_column_types(table_batch: &pb::TableBatch) -> Result<()>
     let mut iox_column_detected = false;
     let mut lp_tag_detected = false;
     let mut lp_field_detected = false;
-    let mut time_nontime_detected = false; // type=time AND name!=time
-    let mut time_time_detected = false; // type=time AND name=time
+    let mut time_time_detected = false; // semantic_type=time AND name=time
 
     for column in &table_batch.columns {
         match pb::column::SemanticType::from_i32(column.semantic_type).unwrap() {
@@ -363,7 +362,7 @@ fn pb_check_table_batch_column_types(table_batch: &pb::TableBatch) -> Result<()>
                 if column.column_name == TIME_COLUMN_NAME {
                     time_time_detected = true;
                 } else {
-                    time_nontime_detected = true;
+                    iox_column_detected = true;
                 }
             }
             _ => {
@@ -375,33 +374,23 @@ fn pb_check_table_batch_column_types(table_batch: &pb::TableBatch) -> Result<()>
         }
     }
 
-    match (
-        iox_column_detected,
-        lp_tag_detected,
-        lp_field_detected,
-        time_nontime_detected,
-        time_time_detected,
-    ) {
-        (true, false, false, _, _) => Ok(()), // Expected IOx column set
-        (false, _, true, false, true) => Ok(()), // Expected line protocol column set
-        (true, true, _, _, _) => Err(Error::PBSemanticTypeConflict {
+    if !time_time_detected {
+        return Err(Error::TimeColumnMissing);
+    }
+
+    match (iox_column_detected, lp_tag_detected, lp_field_detected) {
+        (false, _, true) => Ok(()),  // Expected line protocol column set
+        (_, false, false) => Ok(()), // Expected IOx column set
+        (true, true, _) => Err(Error::PBSemanticTypeConflict {
             message: "IOx column incompatible with line protocol tag column".to_string(),
         }),
-        (true, _, true, _, _) => Err(Error::PBSemanticTypeConflict {
+        (true, _, true) => Err(Error::PBSemanticTypeConflict {
             message: "IOx column incompatible with line protocol field column".to_string(),
         }),
-        (_, _, true, true, _) => Err(Error::PBSemanticTypeConflict {
-            message: "line protocol field column incompatible with time column not named 'time'"
-                .to_string(),
-        }),
-        (_, _, true, _, false) => Err(Error::PBSemanticTypeConflict {
-            message: "line protocol field column requires time column named 'time'".to_string(),
-        }),
-        (_, true, false, _, _) => Err(Error::PBSemanticTypeConflict {
+        (false, true, false) => Err(Error::PBSemanticTypeConflict {
             message: "line protocol tag column requires at least one line protocol field column"
                 .to_string(),
         }),
-        _ => unreachable!(),
     }
 }
 
