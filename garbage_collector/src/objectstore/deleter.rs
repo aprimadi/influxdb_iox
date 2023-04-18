@@ -65,20 +65,19 @@ mod tests {
     use bytes::Bytes;
     use chrono::Utc;
     use data_types::{NamespaceId, PartitionId, ShardId, TableId};
-    use object_store::ObjectStore;
     use object_store::path::Path;
     use parquet_file::ParquetFilePath;
     use std::time::Duration;
     use uuid::Uuid;
 
     #[tokio::test]
-    async fn perform_until_complete() {
+    async fn perform_shutdown_gracefully() {
         let shutdown = CancellationToken::new();
         let nitems = 3;
-        let object_store = Arc::new(object_store::memory::InMemory::new());
-        let items = populate_os_with_items(object_store.clone(), nitems).await;
+        let object_store: Arc<DynObjectStore> = Arc::new(object_store::memory::InMemory::new());
+        let items = populate_os_with_items(&object_store, nitems).await;
 
-        assert_eq!(count_os_element(object_store.clone()).await, nitems);
+        assert_eq!(count_os_element(&object_store).await, nitems);
 
         let dry_run = false;
         let concurrent_deletes = 2;
@@ -92,7 +91,7 @@ mod tests {
                     tx.send(item.clone()).await.unwrap();
                 }
 
-                // Wait until object store is empty before sending shutdown signal
+                // Send a shutdown signal
                 shutdown.cancel();
 
                 // Prevent this thread from exiting. Exiting this thread will
@@ -109,26 +108,25 @@ mod tests {
         // items for deletion.
         let perform_fu = perform(
             shutdown,
-            object_store.clone(),
+            Arc::clone(&object_store),
             dry_run,
             concurrent_deletes,
-            rx
+            rx,
         );
-        let res = tokio::time::timeout(Duration::from_secs(3), perform_fu)
-            .await.unwrap().unwrap();
-        assert_eq!(res, ());
+        // Unusual test because there is no assertion but the call below should
+        // not panic which verifies that the deleter task shutdown gracefully.
+        tokio::time::timeout(Duration::from_secs(3), perform_fu)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
-    async fn count_os_element(os: Arc<dyn ObjectStore>) -> usize {
+    async fn count_os_element(os: &Arc<DynObjectStore>) -> usize {
         let objects = os.list(None).await.unwrap();
-        let count = objects.fold(0, |acc, _| async move { acc + 1 }).await;
-        count
+        objects.fold(0, |acc, _| async move { acc + 1 }).await
     }
 
-    async fn populate_os_with_items(
-        os: Arc<dyn ObjectStore>,
-        nitems: usize
-    ) -> Vec<ObjectMeta> {
+    async fn populate_os_with_items(os: &Arc<DynObjectStore>, nitems: usize) -> Vec<ObjectMeta> {
         let mut items = vec![];
         for i in 0..nitems {
             let object_meta = ObjectMeta {
@@ -136,7 +134,9 @@ mod tests {
                 last_modified: Utc::now(),
                 size: 0,
             };
-            os.put(&object_meta.location, Bytes::from(i.to_string())).await.unwrap();
+            os.put(&object_meta.location, Bytes::from(i.to_string()))
+                .await
+                .unwrap();
             items.push(object_meta);
         }
         items
